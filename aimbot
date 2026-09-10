@@ -1,0 +1,279 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+
+local CONFIG = {
+	AIMBOT_ENABLED = true,
+	FLICK_MODE = true,
+	AIMBOT_FOV = 200,
+	AIMBOT_SMOOTH = 0.35,
+	AIMBOT_TARGET = "Head",
+	AIMBOT_MAX_DIST = 1000,
+	AIMBOT_VISIBLE_ONLY = false,
+	AIMBOT_TEAM_CHECK = false,
+	ESP_ENABLED = true,
+	ESP_BOX_COLOR = Color3.fromRGB(255, 255, 255),
+	ESP_NAME_COLOR = Color3.fromRGB(255, 255, 255),
+	ESP_TRACER_COLOR = Color3.fromRGB(255, 255, 255),
+	ESP_SHOW_HEALTH = true,
+	ESP_SHOW_DISTANCE = true,
+	ESP_SHOW_TRACER = true,
+	KEYBIND_AIM = Enum.KeyCode.E,
+}
+
+local aimActive = false
+local currentTarget = nil
+local espData = {}
+
+local fovGui = Instance.new("ScreenGui")
+fovGui.Name = "FlickGui"
+fovGui.IgnoreGuiInset = true
+fovGui.ResetOnSpawn = false
+fovGui.Parent = playerGui
+
+local fovCircle = Instance.new("Frame")
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.fromScale(0.5, 0.5)
+fovCircle.Size = UDim2.fromOffset(CONFIG.AIMBOT_FOV * 2, CONFIG.AIMBOT_FOV * 2)
+fovCircle.BackgroundTransparency = 1
+fovCircle.BorderSizePixel = 0
+fovCircle.Parent = fovGui
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(1, 0)
+fovCorner.Parent = fovCircle
+
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Color = Color3.fromRGB(255, 255, 255)
+fovStroke.Thickness = 1.5
+fovStroke.Transparency = 0.3
+fovStroke.Parent = fovCircle
+
+local crosshair = Instance.new("Frame")
+crosshair.AnchorPoint = Vector2.new(0.5, 0.5)
+crosshair.Position = UDim2.fromScale(0.5, 0.5)
+crosshair.Size = UDim2.fromOffset(4, 4)
+crosshair.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+crosshair.BorderSizePixel = 0
+crosshair.Parent = fovGui
+
+local chCorner = Instance.new("UICorner")
+chCorner.CornerRadius = UDim.new(1, 0)
+chCorner.Parent = crosshair
+
+local function createESP(plr)
+	if espData[plr] then return espData[plr] end
+	espData[plr] = {
+		box = Drawing.new("Square"),
+		name = Drawing.new("Text"),
+		hp = Drawing.new("Text"),
+		dist = Drawing.new("Text"),
+		tracer = Drawing.new("Line"),
+	}
+	espData[plr].box.Thickness = 1.5
+	espData[plr].box.Filled = false
+	espData[plr].box.Color = CONFIG.ESP_BOX_COLOR
+	espData[plr].name.Size = 14
+	espData[plr].name.Center = true
+	espData[plr].name.Outline = true
+	espData[plr].name.Color = CONFIG.ESP_NAME_COLOR
+	espData[plr].hp.Size = 14
+	espData[plr].hp.Center = true
+	espData[plr].hp.Outline = true
+	espData[plr].hp.Color = Color3.fromRGB(255, 255, 255)
+	espData[plr].dist.Size = 12
+	espData[plr].dist.Center = true
+	espData[plr].dist.Outline = true
+	espData[plr].dist.Color = Color3.fromRGB(200, 200, 200)
+	espData[plr].tracer.Thickness = 1
+	espData[plr].tracer.Color = CONFIG.ESP_TRACER_COLOR
+	return espData[plr]
+end
+
+local function hideESP(obj)
+	obj.box.Visible = false
+	obj.name.Visible = false
+	obj.hp.Visible = false
+	obj.dist.Visible = false
+	obj.tracer.Visible = false
+end
+
+local function updateESP()
+	for plr, obj in pairs(espData) do
+		if not CONFIG.ESP_ENABLED or plr == player then
+			hideESP(obj)
+			continue
+		end
+		local char = plr.Character
+		if not char then hideESP(obj) continue end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		local root = char:FindFirstChild("HumanoidRootPart")
+		local head = char:FindFirstChild("Head")
+		if not hum or not root or not head or hum.Health <= 0 then
+			hideESP(obj)
+			continue
+		end
+		local headPos, headOn = camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+		local rootPos, rootOn = camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+		if not headOn or not rootOn then
+			hideESP(obj)
+			continue
+		end
+		local topX, topY = headPos.X, headPos.Y
+		local botY = rootPos.Y
+		local height = math.abs(botY - topY)
+		local width = height * 0.55
+		local x = topX - width / 2
+		local centerX = topX
+
+		obj.box.Size = Vector2.new(width, height)
+		obj.box.Position = Vector2.new(x, topY)
+		obj.box.Visible = true
+
+		obj.name.Text = plr.Name
+		obj.name.Position = Vector2.new(centerX, topY - 18)
+		obj.name.Visible = true
+
+		if CONFIG.ESP_SHOW_HEALTH then
+			obj.hp.Text = "[" .. math.floor(hum.Health) .. "]"
+			obj.hp.Position = Vector2.new(centerX + width / 2 + 18, topY + height / 2)
+			obj.hp.Visible = true
+		else
+			obj.hp.Visible = false
+		end
+
+		if CONFIG.ESP_SHOW_DISTANCE then
+			local d = (root.Position - camera.CFrame.Position).Magnitude
+			obj.dist.Text = string.format("[%d]", math.floor(d))
+			obj.dist.Position = Vector2.new(centerX, botY + 4)
+			obj.dist.Visible = true
+		else
+			obj.dist.Visible = false
+		end
+
+		if CONFIG.ESP_SHOW_TRACER then
+			local vp = camera.ViewportSize
+			obj.tracer.From = Vector2.new(vp.X / 2, vp.Y)
+			obj.tracer.To = Vector2.new(centerX, botY)
+			obj.tracer.Visible = true
+		else
+			obj.tracer.Visible = false
+		end
+	end
+end
+
+local function removeESP(plr)
+	local obj = espData[plr]
+	if obj then
+		obj.box:Remove()
+		obj.name:Remove()
+		obj.hp:Remove()
+		obj.dist:Remove()
+		obj.tracer:Remove()
+		espData[plr] = nil
+	end
+end
+
+Players.PlayerAdded:Connect(createESP)
+Players.PlayerRemoving:Connect(removeESP)
+for _, plr in ipairs(Players:GetPlayers()) do
+	if plr ~= player then createESP(plr) end
+end
+
+local function isValidTarget(plr)
+	if plr == player then return false end
+	local char = plr.Character
+	if not char then return false end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 then return false end
+	if CONFIG.AIMBOT_TEAM_CHECK and plr.Team == player.Team then return false end
+	return true
+end
+
+local function isVisible(part)
+	if not CONFIG.AIMBOT_VISIBLE_ONLY then return true end
+	local origin = camera.CFrame.Position
+	local dir = part.Position - origin
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { player.Character, part.Parent }
+	return Workspace:Raycast(origin, dir, params) == nil
+end
+
+local function findBestTarget()
+	local best, bestScore = nil, math.huge
+	local vp = camera.ViewportSize
+	local center = Vector2.new(vp.X / 2, vp.Y / 2)
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if not isValidTarget(plr) then continue end
+		local char = plr.Character
+		local part = char:FindFirstChild(CONFIG.AIMBOT_TARGET) or char:FindFirstChild("HumanoidRootPart")
+		if not part then continue end
+		if not isVisible(part) then continue end
+		local dist = (part.Position - camera.CFrame.Position).Magnitude
+		if dist > CONFIG.AIMBOT_MAX_DIST then continue end
+		local sp, onScreen = camera:WorldToViewportPoint(part.Position)
+		if not onScreen then continue end
+		local d2 = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+		if d2 > CONFIG.AIMBOT_FOV then continue end
+		if d2 < bestScore then
+			bestScore = d2
+			best = part
+		end
+	end
+	return best
+end
+
+local function aimStep(dt)
+	if not CONFIG.AIMBOT_ENABLED or not aimActive then
+		currentTarget = nil
+		return
+	end
+	currentTarget = findBestTarget()
+	if currentTarget then
+		local cur = camera.CFrame
+		local want = CFrame.lookAt(cur.Position, currentTarget.Position)
+		local a = CONFIG.FLICK_MODE and 0.5 or (1 - math.exp(-CONFIG.AIMBOT_SMOOTH * 60 * dt))
+		camera.CFrame = cur:Lerp(want, a)
+	end
+end
+
+RunService:BindToRenderStep("FlickAimbot", 201, aimStep)
+
+RunService.RenderStepped:Connect(function()
+	updateESP()
+end)
+
+UIS.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == Enum.KeyCode.F1 then
+		CONFIG.AIMBOT_ENABLED = not CONFIG.AIMBOT_ENABLED
+	elseif input.KeyCode == Enum.KeyCode.F2 then
+		CONFIG.ESP_ENABLED = not CONFIG.ESP_ENABLED
+	elseif input.KeyCode == CONFIG.KEYBIND_AIM then
+		aimActive = not aimActive
+	end
+end)
+
+UIS.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		if not aimActive then
+			aimActive = true
+			task.delay(0.3, function()
+				if aimActive then aimActive = false end
+			end)
+		end
+	end
+end)
+
+player.CharacterAdded:Connect(function()
+	aimActive = false
+	currentTarget = nil
+end)
